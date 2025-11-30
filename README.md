@@ -205,6 +205,10 @@ Everything else lives under `docs/`. Use this as a map:
   [`docs/troubleshooting.md`](docs/troubleshooting.md)  
   Common errors (Docker/GPU, YAML, model downloads, agents, OOMs) and quick fixes.
 
+- **Build sheet (single-path commands)**  
+  [`docs/build-sheet.md`](docs/build-sheet.md)  
+  Copy/paste commands for a first full setup (folders, compose/env, optional agents, ingestion, health checks, backups).
+
 ---
 
 ## How to use this runbook (order)
@@ -254,4 +258,3 @@ echo "Browse to http://127.0.0.1:3000 and follow docs/usage.md setup steps"
 ```
 
 Then proceed to build agents under `~/sealed-box-ai/agents/` using `docs/agents-and-tools.md`.
-
