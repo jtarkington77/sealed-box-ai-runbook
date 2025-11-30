@@ -2,7 +2,7 @@
 
 This is the "how to actually lock this thing down" guide.
 
-Assumptions (same as main README):
+Assumptions:
 
 - You can install a Linux server or VM.
 - You're comfortable in a terminal.
