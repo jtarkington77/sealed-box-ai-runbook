@@ -1,6 +1,6 @@
-# Models & hardware – picking your stack
+# Models & hardware -- picking your stack
 
-This doc is where we stop saying “big model, small model” and actually talk about:
+This doc is where we stop saying "big model, small model" and actually talk about:
 
 - What different model **roles** are in this stack.
 - How parameter count, context, and training data change behavior.
@@ -17,53 +17,86 @@ By the end you should be able to:
 - Pick a **worker** model that fits your GPU and your workflow.
 - Pick a **watchdog** that can keep up.
 - Add optional **code** and **math/research** specialists.
-- Choose an **embedding** model that doesn’t suck.
+- Choose an **embedding** model that doesn't suck.
+
+---
+
+## What I'm actually running right now
+
+Hardware: A6000-class GPU, i9-13xxx CPU, 128 GB RAM, fast NVMe. I keep multiple models loaded and swap specialists as needed.
+
+- **Worker (general daily driver):** `Qwen/Qwen2.5-32B-Instruct` in 4-bit (EXL2) on the main GPU.
+- **Code model:** `Qwen/Qwen2.5-Coder-14B-Instruct` in 4-bit. Loaded when I'm doing heavy coding/automation work.
+- **Security/deep reasoning:** `mistralai/Mixtral-8x7B-Instruct-v0.1` in 4-bit for incident-style analysis and harder chains of thought.
+- **Math (ad hoc):** `Qwen/Qwen2.5-Math-7B-Instruct`, spun up only when I need math/problem-solving to save VRAM.
+- **Watchdog:** `microsoft/Phi-3.5-mini-instruct` (always on for scoring/monitoring).
+- **Embeddings:** `BAAI/bge-m3` (CPU or small GPU) for multilingual retrieval; `nomic-ai/nomic-embed-text-v1` as a lighter fallback.
+
+If you mirror this on smaller hardware, downshift worker to `Qwen2.5-14B-Instruct` (4-bit) and code to `Qwen2.5-Coder-7B-Instruct`, keep the same watchdog/embeddings, and avoid running Mixtral at the same time as your worker.
+
+Use these exact model IDs in `~/sealed-box-ai/stack/env/stack.env` for `WORKER_MODEL` and `WATCHDOG_MODEL` before starting docker compose.
+
+Offline/air-gapped note: pre-fetch these models (and your embedding model) into `data/models` or your runtime cache and point your engine there; Qwen/Meta checkpoints are not bundled and require prior download/auth if gated.
+
+Hugging Face gated checkpoints (e.g., Meta) require a token and license acceptance. If you cannot pull at runtime:
+- Download on a connected machine with `huggingface-cli download ... --local-dir /path/to/models`.
+- Copy into `~/sealed-box-ai/stack/data/models`.
+- Run vLLM with `--model /root/.cache/huggingface/...` mapped to that path.
+
+### If you're on smaller hardware (12–16 GB VRAM)
+
+- **Worker:** `Qwen/Qwen2.5-14B-Instruct` (4-bit) or `meta-llama/Llama-3.1-8B-Instruct` (4-bit).
+- **Code (optional):** `Qwen/Qwen2.5-Coder-7B-Instruct` loaded only when needed.
+- **Watchdog:** keep `microsoft/Phi-3.5-mini-instruct`.
+- **Embeddings:** `BAAI/bge-m3` on CPU.
+- **Tips:** Keep one large model loaded at a time; avoid Mixtral here. If you see OOMs, lower `--max-model-len`.
+- **Performance expectations:** expect slower responses and shorter contexts; 8–14B quantized models are usable for chat/RAG but not “snappy” on big documents. Keep RAG chunks small and prompts concise.
 
 ---
 
 ## 1. Quick mental model: how these things actually work
 
-You don’t need transformer math, but you do need a few concepts straight:
+You don't need transformer math, but you do need a few concepts straight:
 
 ### 1.1 Tokens & context window
 
-Models read text as **tokens** (chunks of words / punctuation). The **context window** is how many tokens they can “see” at once:
+Models read text as **tokens** (chunks of words / punctuation). The **context window** is how many tokens they can "see" at once:
 
-- 4k–8k tokens → fine for chat, short notes.
-- ~32k+ → you can start throwing real docs and logs at it.
-- 100k+ → long reports, multi-doc workflows, “read this whole folder” type stuff.
+- 4k-8k tokens: fine for chat, short notes.
+- ~32k+: you can start throwing real docs and logs at it.
+- 100k+: long reports, multi-doc workflows, "read this whole folder" type stuff.
 
-If your context window is tiny, RAG still helps, but you’ll constantly fight truncation.
+If your context window is tiny, RAG still helps, but you'll constantly fight truncation.
 
 ### 1.2 Parameters (B = billion)
 
 Parameter count is a rough capacity indicator:
 
-- 3B–8B: “small” – fine for simple tasks, starts to fall apart on complex chains of thought.
-- 13B–16B: **floor** for a general assistant that doesn’t feel like a toy.
-- 30B–70B: where open-weight models start feeling like real workers for serious workflows.
+- 3B--8B: "small" -- fine for simple tasks, starts to fall apart on complex chains of thought.
+- 13B--16B: **floor** for a general assistant that doesn't feel like a toy.
+- 30B--70B: where open-weight models start feeling like real workers for serious workflows.
 - MoE (Mixture-of-Experts) like Mixtral:
-  - 8×7B behaves more like a much larger dense model in many tasks.
+  - 8?--7B behaves more like a much larger dense model in many tasks.
 
-More params → more VRAM, slower, but usually better reasoning and robustness.
+More params means more VRAM, slower, but usually better reasoning and robustness.
 
 ### 1.3 Base, instruct, code, math, embeddings, watchdogs
 
-You’ll see model labels like:
+You'll see model labels like:
 
-- **Base** – raw pretrain, not aligned for instructions. Good starting point for fine-tuning, bad as a “just talk to it” assistant.
-- **Instruct / Chat** – tuned to follow instructions. This is what you want for:
+- **Base** -- raw pretrain, not aligned for instructions. Good starting point for fine-tuning, bad as a "just talk to it" assistant.
+- **Instruct / Chat** -- tuned to follow instructions. This is what you want for:
   - Worker.
   - Watchdog (small instruct).
-- **Code** – trained heavily on code + comments. Better at:
+- **Code** -- trained heavily on code + comments. Better at:
   - Filling in functions.
   - Fixing scripts.
   - Understanding stack traces.
-- **Math / reasoning** – tuned on math proofs, competitions, theorems.
+- **Math / reasoning** -- tuned on math proofs, competitions, theorems.
   - Overkill for daily chat.
   - Excellent for heavy problem solving if you have the hardware.
-- **Embedding models** – not chat at all. Text → vector. Used for RAG.
-- **Guard / safety / watchdog** – small models used to:
+- **Embedding models** -- not chat at all. Text to vector. Used for RAG.
+- **Guard / safety / watchdog** -- small models used to:
   - Classify content.
   - Score for risk.
   - Enforce simple policies.
@@ -72,11 +105,11 @@ You’ll see model labels like:
 
 You will almost certainly not run everything in FP16.
 
-- **FP16 / BF16** – high quality, heavy VRAM.
+- **FP16 / BF16** -- high quality, heavy VRAM.
 - **8-bit / 4-bit quantization (GGUF, EXL2, etc.)**:
   - Compress weights to fit models into smaller cards.
   - Slight quality hit, sometimes noticeable, sometimes not.
-  - Lets you run “too big” models on 24–48 GB cards by trading speed and purity.
+  - Lets you run "too big" models on 24-48 GB cards by trading speed and purity.
 
 For this stack, assume:
 
@@ -104,19 +137,19 @@ On that kind of hardware, a **realistic sealed-box stack** looks like:
 - **Math / deep-reasoning specialist (optional):**
   - A math-tuned model (Qwen2.5-Math / DeepSeek-Math / Llemma-class).
 - **Watchdog:**
-  - A 3–4B “small but smart” instruct model (Phi-style SLM) for scoring and tagging.
+  - A 3-4B "small but smart" instruct model (Phi-style SLM) for scoring and tagging.
 - **Embeddings:**
   - A modern embedding model (BGE-M3 or nomic-embed-text-v1).
 
-I’m not listing the exact checkpoints I run because I swap them fairly often, but everything below is chosen to be **real, reproducible equivalents** that will behave similarly on hardware in this ballpark.
+I'm not listing the exact checkpoints I run because I swap them fairly often, but everything below is chosen to be **real, reproducible equivalents** that will behave similarly on hardware in this ballpark.
 
-If your GPU is smaller, you’ll use **smaller / more aggressively quantized variants** of the same families and accept some trade-offs.
+If your GPU is smaller, you'll use **smaller / more aggressively quantized variants** of the same families and accept some trade-offs.
 
 ---
 
-## 3. Roles in this repo’s model lineup
+## 3. Roles in this repo's model lineup
 
-For this runbook, think in terms of **jobs**, not just “a model.”
+For this runbook, think in terms of **jobs**, not just "a model."
 
 ### 3.1 Worker (main assistant)
 
@@ -139,14 +172,14 @@ Separate, smaller model that:
 - Gets a view of:
   - The **prompt** (possibly redacted).
   - The **retrieved context**.
-  - The **worker’s answer** (or a summary of it).
+  - The **worker's answer** (or a summary of it).
 - Tags interactions for:
   - Potential data exfiltration (huge dumps of sensitive data).
   - Dangerous commands / scripts / configs.
-  - Probing / jailbreak / “escape” behavior.
+  - Probing / jailbreak / "escape" behavior.
 - Writes **structured log records** so you can actually query:
-  - “Show me everything tagged high-risk this week.”
-  - “Show me all commands that looked destructive.”
+  - "Show me everything tagged high-risk this week."
+  - "Show me all commands that looked destructive."
 
 You care about:
 
@@ -156,7 +189,7 @@ You care about:
 
 ### 3.3 Code specialist (optional)
 
-Used when you’re:
+Used when you're:
 
 - Writing / reading PowerShell, Bash, Python, C#, etc.
 - Debugging scripts.
@@ -186,7 +219,7 @@ You care about:
 Used only for:
 
 - Turning text into vectors for RAG.
-- Powering “find related docs / notes / logs” queries.
+- Powering "find related docs / notes / logs" queries.
 
 You care about:
 
@@ -196,15 +229,15 @@ You care about:
 
 ---
 
-## 4. Model families by job (and what they’re actually good at)
+## 4. Model families by job (and what they're actually good at)
 
-Below are **families** you can build on. You don’t need all of them – pick the ones that match how you actually work.
+Below are **families** you can build on. You don't need all of them -- pick the ones that match how you actually work.
 
 ---
 
 ### 4.1 General assistant / worker (13B+ recommended)
 
-These are your “talk to me, help me work” models.
+These are your "talk to me, help me work" models.
 
 #### Llama 3.x family
 
@@ -245,7 +278,7 @@ Use this if you want a **strong open generalist** with good future expansion (ma
   - Heavier reasoning workloads where a simple 7B/13B struggles.
   - Punches above its parameter count because of MoE routing.
 - Watch for:
-  - VRAM is real: at 4-bit you’re still in the ~22–24 GB VRAM ballpark just for the worker, plus overhead.
+  - VRAM is real: at 4-bit you're still in the ~22-24 GB VRAM ballpark just for the worker, plus overhead.
   - Needs a decent GPU tier to feel good as a daily driver.
 
 Use this if you want a **serious worker on a 24+ GB card** and are okay with more setup work.
@@ -278,7 +311,7 @@ Good fit if you want a **single modern, actively updated code family**.
   - High-end code performance, competitive with big closed models.
 - Watch for:
   - Heavier VRAM and infra requirements.
-  - Licensing – check if your use is allowed.
+  - Licensing -- check if your use is allowed.
 
 Use this if code is a **primary use case** and you have hardware to back it.
 
@@ -286,7 +319,7 @@ Use this if code is a **primary use case** and you have hardware to back it.
 
 ### 4.3 Math / heavy reasoning models
 
-These are overkill for daily chat, but useful when you’re doing serious math or hardcore reasoning.
+These are overkill for daily chat, but useful when you're doing serious math or hardcore reasoning.
 
 #### Qwen2.5-Math series
 
@@ -297,7 +330,7 @@ These are overkill for daily chat, but useful when you’re doing serious math o
   - English + Chinese math problems.
   - Chain-of-thought and tool-integrated reasoning.
 - Watch for:
-  - Meant for math. Don’t use these as your default chit-chat worker.
+  - Meant for math. Don't use these as your default chit-chat worker.
 
 #### DeepSeek-Math series
 
@@ -320,7 +353,7 @@ These are overkill for daily chat, but useful when you’re doing serious math o
 - Watch for:
   - Strong math brain, but not a general conversationalist.
 
-Use math models when you’re doing **actual math**, and keep a generalist worker for everything else.
+Use math models when you're doing **actual math**, and keep a generalist worker for everything else.
 
 ---
 
@@ -334,16 +367,16 @@ You want something **small but not stupid**.
   - `microsoft/Phi-3-mini-4k-instruct`
   - `microsoft/Phi-3.5-mini-instruct`
 - Good for:
-  - Running on 3–4B params with surprisingly strong reasoning for the size.
-  - Classification, scoring, “is this risky?” tasks.
+  - Running on 3-4B params with surprisingly strong reasoning for the size.
+  - Classification, scoring, "is this risky-- tasks.
 - Watch for:
-  - Small context windows on some variants; but that’s usually fine for short summaries of interaction.
+  - Small context windows on some variants; but that's usually fine for short summaries of interaction.
 
 You can also use:
 
 - Smaller Llama 3 / Qwen 2.5 instruct variants as watchdogs if you prefer family alignment.
 
-The key idea: **watchdog doesn’t have to be huge**, it just has to be fast and consistent.
+The key idea: **watchdog doesn't have to be huge**, it just has to be fast and consistent.
 
 ---
 
@@ -379,7 +412,7 @@ Both are light enough to run on CPU if your GPU is busy.
 
 Map these back to what the README calls out for VRAM.
 
-### 5.1 12–16 GB VRAM – “proving ground”
+### 5.1 12-16 GB VRAM -- "proving ground"
 
 Example cards: 3060 12GB, 4070 12GB, 4060Ti 16GB.
 
@@ -392,7 +425,7 @@ Suggested stack:
 - **Worker:**  
   - Llama 3.x 8B Instruct **or** Qwen2.5-7B-Instruct (quantized).
 - **Watchdog:**  
-  - Phi-3/3.5-Mini-Instruct (3–4B).
+  - Phi-3/3.5-Mini-Instruct (3-4B).
 - **Code (optional):**  
   - Qwen2.5-Coder-7B-Instruct (loaded as needed).
 - **Math (optional / ad-hoc):**  
@@ -412,11 +445,11 @@ Where it *will* hurt:
 - Heavy DFIR / log workflows.
 - Massive context windows.
 
-Treat 7B/8B here as “entry-tier worker” until you can move up.
+Treat 7B/8B here as "entry-tier worker" until you can move up.
 
 ---
 
-### 5.2 16–24 GB VRAM – “daily driver”
+### 5.2 16-24 GB VRAM -- "daily driver"
 
 Example cards: 4080 Super, 3090, older 24GB prosumer cards.
 
@@ -440,17 +473,17 @@ What this is good for:
 - Real daily use:
   - Writing, reports, notes, incident documentation.
   - RAG over a meaningful personal knowledge base.
-  - Agents for “what changed this week?”, “summarize my lab notes”, etc.
+  - Agents for "what changed this week--, "summarize my lab notes", etc.
 
 Limits:
 
 - You still have to be careful with:
   - Long-context variants.
-  - Very big models (Mixtral, 32B Qwen2.5) – they may run but won’t feel snappy.
+  - Very big models (Mixtral, 32B Qwen2.5) -- they may run but won't feel snappy.
 
 ---
 
-### 5.3 24+ GB VRAM – “comfort / high-end” (A6000-class)
+### 5.3 24+ GB VRAM -- "comfort / high-end" (A6000-class)
 
 Example: 4090, 5090, A6000, RTX 6000-class.
 
@@ -461,7 +494,7 @@ Suggested stack on an A6000-class rig:
 - **Worker (general):**  
   - Qwen2.5-32B-Instruct **or** Mixtral-8x7B-Instruct (4-bit) **or** a larger Llama-3.x instruct variant, depending on where you want to sit on the speed/quality line.
 - **Watchdog:**  
-  - Phi-3.5-Mini-Instruct (3–4B, always-on).
+  - Phi-3.5-Mini-Instruct (3-4B, always-on).
 - **Code:**  
   - Qwen2.5-Coder-14B-Instruct.
 - **Math / deep reasoning:**  
@@ -474,7 +507,7 @@ What this unlocks:
 - Bigger context windows without everything crawling.
 - Multiple agents in parallel:
   - Notes + logs + tickets at the same time.
-- “AI as infrastructure”:
+- "AI as infrastructure":
   - Daily digests.
   - Weekly lab summaries.
   - RAG across a genuinely large collection of documents.
@@ -482,7 +515,7 @@ What this unlocks:
 You still need to watch:
 
 - VRAM when stacking multiple big models at once.
-- Latency vs quality – a 32B or MoE worker is powerful, but every agent call has a cost.
+- Latency vs quality -- a 32B or MoE worker is powerful, but every agent call has a cost.
 
 ---
 
@@ -503,7 +536,7 @@ Good worker options:
 
 - Qwen2.5-14B or 32B-Instruct.
 - Llama 3.x 13B or 70B-class (if hardware allows).
-- Mixtral-8x7B if you’re on a beefy card.
+- Mixtral-8x7B if you're on a beefy card.
 
 Pair with:
 
@@ -524,7 +557,7 @@ Keep your **general worker**, then add:
   - Worker handle natural language.
   - Code model handle heavy code generation/repair.
 
-### 6.3 Math / research / “hard thinking” tasks
+### 6.3 Math / research / "hard thinking" tasks
 
 You mostly:
 
@@ -534,11 +567,11 @@ You mostly:
 Keep your general worker, then add:
 
 - Qwen2.5-Math-7B/72B for math-heavy sessions.
-- DeepSeek-Math-class or Llemma if you’re comfortable with their licenses and VRAM cost.
+- DeepSeek-Math-class or Llemma if you're comfortable with their licenses and VRAM cost.
 
 Use them through:
 
-- Agents that explicitly route “math-tagged” tasks to the math specialist.
+- Agents that explicitly route "math-tagged" tasks to the math specialist.
 - Separate endpoints so you know what model is answering what.
 
 ### 6.4 Watchdog / safety
@@ -567,7 +600,7 @@ When you sit down to pick models:
    Know exactly what your card can handle with some headroom.
 
 2. **Pick one worker, one watchdog, one embedding model**  
-   Don’t overcomplicate your first pass. Get:
+   Don't overcomplicate your first pass. Get:
    - Worker answering.
    - RAG returning sensible docs.
    - Watchdog tagging interactions.
@@ -576,15 +609,15 @@ When you sit down to pick models:
    - Code model when you actually start doing code work.
    - Math model when you actually need serious math.
 
-4. **Record what’s running**  
+4. **Record what's running**  
    - Write down model names, quantization, and roles.
    - Put that in your own ops doc so you can remember what you deployed.
 
 5. **Change one thing at a time**  
    - Swap worker models and compare behavior on **your** real tasks.
-   - Don’t benchmark on synthetic leaderboards alone.
+   - Don't benchmark on synthetic leaderboards alone.
 
-Once you’re comfortable with your stack choice, the rest of the runbook (agents, safety, watchdog wiring) assumes:
+Once you're comfortable with your stack choice, the rest of the runbook (agents, safety, watchdog wiring) assumes:
 
 - You have at least:
   - One worker.
