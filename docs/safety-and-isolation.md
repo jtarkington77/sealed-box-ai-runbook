@@ -1,27 +1,27 @@
 # Safety, isolation, and remote access
 
-This is the “how to actually lock this thing down” guide.
+This is the "how to actually lock this thing down" guide.
 
 Assumptions (same as main README):
 
 - You can install a Linux server or VM.
-- You’re comfortable in a terminal.
+- You're comfortable in a terminal.
 - You can edit config files and restart services.
 - You are **not** already a firewall / network expert.
 
-We’ll walk through:
+We'll walk through:
 
 - A **baseline sealed-box setup** on a single LAN with an ISP router.
 - A **better isolated setup** if you have a real firewall (OPNsense/pfSense/etc.).
 - How to reach the box remotely without just port-forwarding your LLM to the internet.
-- Outbound controls so the box doesn’t quietly spray data out.
-- “Safe enough” patterns for data used in RAG and (optional) training.
+- Outbound controls so the box doesn't quietly spray data out.
+- "Safe enough" patterns for data used in RAG and (optional) training.
 
 ---
 
 ## 1. Threat model (plain English)
 
-You’re building a box that:
+You're building a box that:
 
 - Knows a lot about your life / lab / projects.
 - Lives on your network with other important systems.
@@ -33,11 +33,11 @@ We want to make it hard for:
   - Hit an exposed LLM/agent port.
   - Use the box as a pivot into the rest of your network.
 - The box to:
-  - Leak data out via “helpful” agents or misconfigured tools.
+  - Leak data out via "helpful" agents or misconfigured tools.
 - You to:
-  - Accidentally log sensitive data in a way that’s easy to steal.
+  - Accidentally log sensitive data in a way that's easy to steal.
 
-We are not proving anything mathematically secure; we are building something **much safer than “LLM on :8000, port-forwarded to the internet.”**
+We are not proving anything mathematically secure; we are building something **much safer than "LLM on :8000, port-forwarded to the internet."**
 
 ---
 
@@ -47,13 +47,13 @@ This section assumes:
 
 - You have one consumer router from your ISP.
 - Everything is on one subnet (for example `192.168.1.0/24`).
-- You’re running the AI stack on a Linux server called `ai-box`.
+- You're running the AI stack on a Linux server called `ai-box`.
 
 ### 2.1 Give the AI box a predictable IP
 
 You need the box to have a stable address.
 
-**Option A – DHCP reservation (preferred if your router supports it)**
+**Option A -- DHCP reservation (preferred if your router supports it)**
 
 1. On `ai-box`, find your MAC address:
 
@@ -61,14 +61,14 @@ You need the box to have a stable address.
 
    Identify the interface that actually has your LAN address (for example `eth0`, `eno1`) and note its MAC.
 
-2. On your router’s web UI:
+2. On your router's web UI:
    - Open the DHCP / LAN / address-reservation page.
    - Add an entry:
      - MAC: use the value from step 1.
      - IP: something like `192.168.1.50` (inside your LAN range, outside DHCP pool if required).
    - Save and reboot `ai-box` if needed.
 
-**Option B – Static IP on the box (example: Ubuntu with netplan)**
+**Option B -- Static IP on the box (example: Ubuntu with netplan)**
 
 Edit `/etc/netplan/01-netcfg.yaml` (file name may differ):
 
@@ -253,7 +253,7 @@ At this point the stack is reachable on:
 - Port 443 on `ai-box` is fronted by Caddy and protected by auth.
 - The LLM, watchdog, vector store, etc. are **not** bound to host ports.
 
-You still want to use the web UI (and API) when you’re away from home or the office.  
+You still want to use the web UI (and API) when you're away from home or the office.  
 There are three sane ways to do that without just forwarding ports from the router:
 
 1. SSH local tunnel.
@@ -261,13 +261,13 @@ There are three sane ways to do that without just forwarding ports from the rout
 3. HTTPS tunnel (for example Cloudflare Tunnel) that only exposes the reverse proxy.
 
 The common rule:  
-**nothing ever exposes the raw LLM service directly – only the reverse proxy on 443.**
+**nothing ever exposes the raw LLM service directly -- only the reverse proxy on 443.**
 
 ---
 
-### 2.5.1 SSH local tunnel → web UI
+### 2.5.1 SSH local tunnel -> web UI
 
-This is the simplest pattern if you’re the only user and you’re comfortable with SSH.
+This is the simplest pattern if you're the only user and you're comfortable with SSH.
 
 **What it does**
 
@@ -299,7 +299,7 @@ This is the simplest pattern if you’re the only user and you’re comfortable 
 
    You should see:
 
-   - The Caddy “front door”.
+   - The Caddy "front door".
    - Then the auth prompt you configured.
    - Then the chat UI / dashboard.
 
@@ -320,14 +320,14 @@ If you want multiple devices to access the box (phone, tablet, other PCs) withou
 - Run WireGuard / OpenVPN / similar on:
   - Your firewall (OPNsense/pfSense/MikroTik), **or**
   - A small VM/host on a DMZ / separate subnet.
-- When you’re remote:
+- When you're remote:
   - Connect the VPN from your device.
   - Your device gets an IP on your internal network.
   - You access `https://ai-box.local` (or `https://192.168.1.50`) exactly like you do on-site.
 
 **High-level steps (WireGuard example)**
 
-1. Set up a WireGuard “server” on your firewall or a separate host.
+1. Set up a WireGuard "server" on your firewall or a separate host.
 2. Create a peer for each client (phone, workstation, etc.).
 3. Configure the VPN to allow access to the LAN where `ai-box` lives.
 4. On the client, import the WireGuard config and connect.
@@ -343,14 +343,14 @@ If you want multiple devices to access the box (phone, tablet, other PCs) withou
 
 ### 2.5.3 HTTPS tunnel with a proxy service (Cloudflare Tunnel example)
 
-If you already use Cloudflare (or a similar service) and don’t want to manage a full VPN, you can use an HTTPS tunnel to expose **only** the reverse proxy, with strong auth in front of it.
+If you already use Cloudflare (or a similar service) and don't want to manage a full VPN, you can use an HTTPS tunnel to expose **only** the reverse proxy, with strong auth in front of it.
 
 This pattern assumes:
 
 - You have a domain managed by Cloudflare (for example `yourdomain.com`).
 - You can install the Cloudflare tunnel agent (`cloudflared`) on `ai-box` (or a small helper host that can reach it).
 
-> The exact commands change over time; always check Cloudflare’s docs.  
+> The exact commands change over time; always check Cloudflare's docs.  
 > What follows is the **shape** of the setup, not a copy of their manual.
 
 #### a) Install cloudflared
@@ -394,7 +394,7 @@ Replace:
 
 This says:
 
-- Cloudflare edge → your tunnel → `https://ai-box.local:443` (Caddy).
+- Cloudflare edge -> your tunnel -> `https://ai-box.local:443` (Caddy).
 - Nothing else is exposed; no direct tunnel to the LLM containers.
 
 #### d) Route DNS through the tunnel
@@ -421,7 +421,7 @@ You should see the same Caddy front door and auth flow as on LAN.
 
 #### f) Add another layer of auth (strongly recommended)
 
-Cloudflare offers “Access” / Zero Trust policies that:
+Cloudflare offers "Access" / Zero Trust policies that:
 
 - Force SSO login (Google/Microsoft/etc.).
 - Limit which accounts can reach `sealedbox.yourdomain.com`.
@@ -458,25 +458,25 @@ Example layout:
 
 Translate these into your firewall UI.
 
-**From LAN → AI_NET**
+**From LAN -> AI_NET**
 
-- Allow `LAN` → `ai-box` on TCP 443 (for HTTPS).
-- Optionally allow `LAN` → `ai-box` on TCP 22 (SSH) from your admin IP.
+- Allow `LAN` -> `ai-box` on TCP 443 (for HTTPS).
+- Optionally allow `LAN` -> `ai-box` on TCP 22 (SSH) from your admin IP.
 - Block all other traffic from `LAN` to `AI_NET`.
 
-**From AI_NET → LAN**
+**From AI_NET -> LAN**
 
-- If needed, allow `ai-box` → NAS on whatever ports your storage uses (NFS/SMB).  
-  If you don’t use a NAS, skip this.
+- If needed, allow `ai-box` -> NAS on whatever ports your storage uses (NFS/SMB).  
+  If you don't use a NAS, skip this.
 - Block all other traffic from `AI_NET` to `LAN`.
 
-**From AI_NET → WAN**
+**From AI_NET -> WAN**
 
 - Create an alias/group for update hosts (OS repos, container registries, tunnel endpoints).
-- Allow `ai-box` → that alias on TCP 80/443.
+- Allow `ai-box` -> that alias on TCP 80/443.
 - Block all other outbound from `AI_NET` to `WAN`.
 
-**From WAN → AI_NET**
+**From WAN -> AI_NET**
 
 - No rules that forward WAN traffic directly to `AI_NET`.  
   Remote access must go through:
@@ -498,10 +498,10 @@ You still need **app-layer** controls.
 
 Every part of the stack should sit behind the reverse proxy:
 
-- Chat UI → `/ui`
-- Worker LLM API → `/llm`
-- Agent/orchestration APIs → `/agent/*`
-- Optional watchdog dashboard → `/watchdog/*`
+- Chat UI -> `/ui`
+- Worker LLM API -> `/llm`
+- Agent/orchestration APIs -> `/agent/*`
+- Optional watchdog dashboard -> `/watchdog/*`
 
 The LLM and other services should only bind to:
 
@@ -545,7 +545,7 @@ For any admin UI (LLM control panel, vector store console, Grafana, etc.):
 
 ## 5. Outbound traffic control
 
-Models don’t magically phone home, but your code and tools might:
+Models don't magically phone home, but your code and tools might:
 
 - Agents making HTTP calls.
 - Ingestion jobs fetching URLs.
@@ -553,8 +553,8 @@ Models don’t magically phone home, but your code and tools might:
 
 You want clear answers to:
 
-- “Where can this box talk to?”
-- “How does data ever leave this subnet?”
+- "Where can this box talk to--
+- "How does data ever leave this subnet--
 
 ### 5.1 Network-level outbound
 
@@ -569,8 +569,8 @@ On a real firewall:
 
 On an ISP router:
 
-- Use whatever “access control” / outbound rules you have.
-- If it’s extremely basic:
+- Use whatever "access control" / outbound rules you have.
+- If it's extremely basic:
   - Be conservative with agents that hit the
  internet.
   - Prefer internal-only tools and local data.
@@ -579,14 +579,14 @@ On an ISP router:
 
 In your agent/orchestration code:
 
-- Treat “HTTP request” as a **privileged tool**.
-- Don’t give the model a tool that can hit arbitrary URLs.
+- Treat "HTTP request" as a **privileged tool**.
+- Don't give the model a tool that can hit arbitrary URLs.
 - Instead, hard-code allowlists:
   - Your internal docs/wiki.
   - Specific public documentation sites.
   - APIs you control.
 
-For “send email”:
+For "send email":
 
 - Only allow the agent to send to:
   - You, or a small list of addresses.
@@ -595,13 +595,13 @@ For “send email”:
   - Subject.
   - A copy of the body.
 
-This keeps “helpful automation” from quietly turning into “data exfil”.
+This keeps "helpful automation" from quietly turning into "data exfil".
 
 ---
 
 ## 6. Data for RAG and training
 
-This box is supposed to know your world. That’s the whole point.  
+This box is supposed to know your world. That's the whole point.  
 You still want to be deliberate about what you feed it.
 
 ### 6.1 Safer inputs
@@ -622,7 +622,7 @@ Fine-tuning (if you ever do it):
 - Use:
   - Generic patterns.
   - Synthetic or scrubbed examples.
-  - Data you’d be okay seeing in a controlled demo.
+  - Data you'd be okay seeing in a controlled demo.
 
 ### 6.2 High-risk inputs
 
@@ -639,7 +639,7 @@ If you insist on using them:
   - A separate, encrypted volume.
 - Make sure:
   - Only the RAG layer reads them.
-  - You don’t echo them back into logs.
+  - You don't echo them back into logs.
 
 ### 6.3 Logging awareness
 
@@ -655,13 +655,13 @@ Any time you send data into the stack, ask:
   - Retained?
   - Backed up somewhere else?
 
-Sometimes the leak is not the model; it’s the `logs/` directory you forgot about.
+Sometimes the leak is not the model; it's the `logs/` directory you forgot about.
 
 ---
 
 ## 7. Safety checklists
 
-### 7.1 Minimum “I’m not being reckless”
+### 7.1 Minimum "I'm not being reckless"
 
 - [ ] No raw LLM or agent ports exposed on the WAN.
 - [ ] Only the reverse proxy listens on 443.
@@ -671,15 +671,15 @@ Sometimes the leak is not the model; it’s the `logs/` directory you forgot abo
 - [ ] Watchdog model sees request/response pairs and logs its verdicts.
 - [ ] Logs live somewhere you can actually review them.
 
-### 7.2 “I care about this a lot”
+### 7.2 "I care about this a lot"
 
 Everything above, plus:
 
 - [ ] AI stack lives on its own subnet/VLAN.
 - [ ] Firewall rules strictly control:
-  - LAN → AI_NET
-  - AI_NET → LAN
-  - AI_NET → WAN
+  - LAN -> AI_NET
+  - AI_NET -> LAN
+  - AI_NET -> WAN
 - [ ] Remote access only via VPN / SSH tunnel / secure tunnel endpoint on the proxy.
 - [ ] Agents use allowlisted tools only; no arbitrary HTTP by default.
 - [ ] RAG sources are intentional and documented.
@@ -690,4 +690,8 @@ Everything above, plus:
 From here, plug into:
 
 - `docs/watchdog-monitoring.md` for wiring the smaller model into the logging path.
-- `docs/agents-and-workflows.md` for concrete examples of how worker + watchdog + tools actually play together.
+- `docs/agents-and-tools.md` for concrete examples of how worker + watchdog + tools actually play together.
+
+
+
+
