@@ -19,7 +19,7 @@ We'll walk through:
 
 ---
 
-## 1. Threat model (plain English)
+## 1. Threat model
 
 You're building a box that:
 
